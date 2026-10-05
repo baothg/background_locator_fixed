@@ -15,6 +15,7 @@ class GoogleLocationProviderClient(context: Context, override var listener: Loca
     @SuppressLint("MissingPermission")
     override fun requestLocationUpdates(request: LocationRequestOptions) {
         client.requestLocationUpdates(getLocationRequest(request), locationCallback, null)
+            .addOnFailureListener { listener?.onLocationError(it) }
     }
 
     private fun getLocationRequest(request: LocationRequestOptions): LocationRequest {

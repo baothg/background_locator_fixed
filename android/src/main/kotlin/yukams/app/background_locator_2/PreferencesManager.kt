@@ -16,7 +16,7 @@ class PreferencesManager {
 
             sharedPreferences.edit()
                     .putLong(Keys.ARG_CALLBACK_DISPATCHER,
-                            map[Keys.ARG_CALLBACK_DISPATCHER] as Long)
+                            (map[Keys.ARG_CALLBACK_DISPATCHER] as Number).toLong())
                     .apply()
         }
 
@@ -24,78 +24,49 @@ class PreferencesManager {
         fun saveSettings(context: Context, map: Map<Any, Any>) {
             val sharedPreferences =
                     context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+            val settings = map[Keys.ARG_SETTINGS] as? Map<*, *>
+                    ?: throw IllegalArgumentException("Missing location settings")
+            val editor = sharedPreferences.edit()
+            editor.putLong(Keys.ARG_CALLBACK, (map[Keys.ARG_CALLBACK] as Number).toLong())
 
-            val callback = map[Keys.ARG_CALLBACK] as Number
-            sharedPreferences.edit()
-                    .putLong(Keys.ARG_CALLBACK,
-                            callback.toLong())
-                    .apply()
+            (map[Keys.ARG_NOTIFICATION_CALLBACK] as? Number)?.let {
+                editor.putLong(Keys.ARG_NOTIFICATION_CALLBACK, it.toLong())
+            } ?: editor.remove(Keys.ARG_NOTIFICATION_CALLBACK)
 
-            if (map[Keys.ARG_NOTIFICATION_CALLBACK] as? Long != null) {
-                sharedPreferences.edit()
-                        .putLong(Keys.ARG_NOTIFICATION_CALLBACK,
-                                map[Keys.ARG_NOTIFICATION_CALLBACK] as Long)
-                        .apply()
+            editor.putString(
+                    Keys.SETTINGS_ANDROID_NOTIFICATION_CHANNEL_NAME,
+                    settings[Keys.SETTINGS_ANDROID_NOTIFICATION_CHANNEL_NAME] as? String ?: "")
+            editor.putString(
+                    Keys.SETTINGS_ANDROID_NOTIFICATION_TITLE,
+                    settings[Keys.SETTINGS_ANDROID_NOTIFICATION_TITLE] as? String ?: "")
+            editor.putString(
+                    Keys.SETTINGS_ANDROID_NOTIFICATION_MSG,
+                    settings[Keys.SETTINGS_ANDROID_NOTIFICATION_MSG] as? String ?: "")
+            editor.putString(
+                    Keys.SETTINGS_ANDROID_NOTIFICATION_BIG_MSG,
+                    settings[Keys.SETTINGS_ANDROID_NOTIFICATION_BIG_MSG] as? String ?: "")
+            editor.putString(
+                    Keys.SETTINGS_ANDROID_NOTIFICATION_ICON,
+                    settings[Keys.SETTINGS_ANDROID_NOTIFICATION_ICON] as? String ?: "")
+            editor.putLong(
+                    Keys.SETTINGS_ANDROID_NOTIFICATION_ICON_COLOR,
+                    (settings[Keys.SETTINGS_ANDROID_NOTIFICATION_ICON_COLOR] as Number).toLong())
+            editor.putInt(
+                    Keys.SETTINGS_INTERVAL,
+                    (settings[Keys.SETTINGS_INTERVAL] as Number).toInt())
+            editor.putInt(
+                    Keys.SETTINGS_ACCURACY,
+                    (settings[Keys.SETTINGS_ACCURACY] as Number).toInt())
+            editor.putFloat(
+                    Keys.SETTINGS_DISTANCE_FILTER,
+                    (settings[Keys.SETTINGS_DISTANCE_FILTER] as Number).toFloat())
+            (settings[Keys.SETTINGS_ANDROID_WAKE_LOCK_TIME] as? Number)?.let {
+                editor.putInt(Keys.SETTINGS_ANDROID_WAKE_LOCK_TIME, it.toInt())
             }
-
-            val settings = map[Keys.ARG_SETTINGS] as Map<*, *>
-
-            sharedPreferences.edit()
-                    .putString(Keys.SETTINGS_ANDROID_NOTIFICATION_CHANNEL_NAME,
-                            settings[Keys.SETTINGS_ANDROID_NOTIFICATION_CHANNEL_NAME] as String)
-                    .apply()
-
-            sharedPreferences.edit()
-                    .putString(Keys.SETTINGS_ANDROID_NOTIFICATION_TITLE,
-                            settings[Keys.SETTINGS_ANDROID_NOTIFICATION_TITLE] as String)
-                    .apply()
-
-            sharedPreferences.edit()
-                    .putString(Keys.SETTINGS_ANDROID_NOTIFICATION_MSG,
-                            settings[Keys.SETTINGS_ANDROID_NOTIFICATION_MSG] as String)
-                    .apply()
-
-            sharedPreferences.edit()
-                    .putString(Keys.SETTINGS_ANDROID_NOTIFICATION_BIG_MSG,
-                            settings[Keys.SETTINGS_ANDROID_NOTIFICATION_BIG_MSG] as String)
-                    .apply()
-
-            sharedPreferences.edit()
-                    .putString(Keys.SETTINGS_ANDROID_NOTIFICATION_ICON,
-                            settings[Keys.SETTINGS_ANDROID_NOTIFICATION_ICON] as String)
-                    .apply()
-
-            sharedPreferences.edit()
-                    .putLong(Keys.SETTINGS_ANDROID_NOTIFICATION_ICON_COLOR,
-                            settings[Keys.SETTINGS_ANDROID_NOTIFICATION_ICON_COLOR] as Long)
-                    .apply()
-
-            sharedPreferences.edit()
-                    .putInt(Keys.SETTINGS_INTERVAL,
-                            settings[Keys.SETTINGS_INTERVAL] as Int)
-                    .apply()
-
-            sharedPreferences.edit()
-                    .putInt(Keys.SETTINGS_ACCURACY,
-                            settings[Keys.SETTINGS_ACCURACY] as Int)
-                    .apply()
-
-            sharedPreferences.edit()
-                    .putFloat(Keys.SETTINGS_DISTANCE_FILTER,
-                            (settings[Keys.SETTINGS_DISTANCE_FILTER] as Double).toFloat())
-                    .apply()
-
-            if (settings.containsKey(Keys.SETTINGS_ANDROID_WAKE_LOCK_TIME)) {
-                sharedPreferences.edit()
-                        .putInt(Keys.SETTINGS_ANDROID_WAKE_LOCK_TIME,
-                                settings[Keys.SETTINGS_ANDROID_WAKE_LOCK_TIME] as Int)
-                        .apply()
-            }
-
-            sharedPreferences.edit()
-                    .putInt(Keys.SETTINGS_ANDROID_LOCATION_CLIENT,
-                            settings[Keys.SETTINGS_ANDROID_LOCATION_CLIENT] as Int)
-                    .apply()
+            editor.putInt(
+                    Keys.SETTINGS_ANDROID_LOCATION_CLIENT,
+                    (settings[Keys.SETTINGS_ANDROID_LOCATION_CLIENT] as Number).toInt())
+            editor.apply()
         }
 
         @JvmStatic
@@ -159,6 +130,24 @@ class PreferencesManager {
                     context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
             val client = sharedPreferences.getInt(Keys.SETTINGS_ANDROID_LOCATION_CLIENT, 0)
             return LocationClient.fromInt(client) ?: LocationClient.Google
+        }
+
+        @JvmStatic
+        fun setTrackingEnabled(context: Context, enabled: Boolean) {
+            context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+                .edit()
+                .putBoolean(Keys.TRACKING_ENABLED_KEY, enabled)
+                .apply()
+        }
+
+        @JvmStatic
+        fun isTrackingEnabled(context: Context): Boolean {
+            val preferences = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+            if (preferences.contains(Keys.TRACKING_ENABLED_KEY)) {
+                return preferences.getBoolean(Keys.TRACKING_ENABLED_KEY, false)
+            }
+            return preferences.contains(Keys.ARG_CALLBACK) &&
+                preferences.getLong(Keys.ARG_CALLBACK_DISPATCHER, 0L) != 0L
         }
 
         @JvmStatic

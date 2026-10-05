@@ -9,6 +9,9 @@ class Keys {
         val CALLBACK_DISPATCHER_HANDLE_KEY = "CALLBACK_DISPATCHER_HANDLE_KEY"
 
         @JvmStatic
+        val TRACKING_ENABLED_KEY = "TRACKING_ENABLED_KEY"
+
+        @JvmStatic
         val CALLBACK_HANDLE_KEY = "CALLBACK_HANDLE_KEY"
 
         @JvmStatic

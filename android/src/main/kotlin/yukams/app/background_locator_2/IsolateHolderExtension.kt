@@ -15,26 +15,40 @@ import io.flutter.view.FlutterCallbackInformation
 import yukams.app.background_locator_2.IsolateHolderService.Companion.isServiceInitialized
 import yukams.app.background_locator_2.provider.LocationRequestOptions
 import java.lang.RuntimeException
-import java.util.concurrent.atomic.AtomicBoolean
+import androidx.core.content.ContextCompat
+
+internal fun Context.hasLocationPermission(): Boolean =
+    ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) ==
+        PackageManager.PERMISSION_GRANTED ||
+        ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) ==
+        PackageManager.PERMISSION_GRANTED
+
+internal fun Context.hasBackgroundLocationPermission(): Boolean =
+    Build.VERSION.SDK_INT < Build.VERSION_CODES.Q ||
+        ContextCompat.checkSelfPermission(
+            this,
+            Manifest.permission.ACCESS_BACKGROUND_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED
 
 internal fun IsolateHolderService.startLocatorService(context: Context) {
-
-    val serviceStarted = AtomicBoolean(IsolateHolderService.isServiceRunning)
     // start synchronized block to prevent multiple service instant
-    synchronized(serviceStarted) {
+    synchronized(IsolateHolderService::class.java) {
         this.context = context
         // resetting the background engine to avoid being stuck after an app crash
-        IsolateHolderService.backgroundEngine?.destroy();
-        IsolateHolderService.backgroundEngine = null
+        if (!IsolateHolderService.hasPendingBackgroundCalls()) {
+            IsolateHolderService.backgroundEngine?.destroy()
+            IsolateHolderService.backgroundEngine = null
+            isServiceInitialized = false
+        } else {
+            isServiceInitialized = true
+        }
         try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
-                context.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)
-                == PackageManager.PERMISSION_GRANTED
-            ) {
+            if (context.hasLocationPermission() && IsolateHolderService.backgroundEngine == null) {
                 // We need flutter engine to handle callback, so if it is not available we have to create a
                 // Flutter engine without any view
                 Log.e("IsolateHolderService", "startLocatorService: Start Flutter Engine")
-                IsolateHolderService.backgroundEngine = FlutterEngine(context)
+                val engine = FlutterEngine(context)
+                IsolateHolderService.backgroundEngine = engine
 
                 val callbackHandle = context.getSharedPreferences(
                     Keys.SHARED_PREFERENCES_KEY,
@@ -44,9 +58,11 @@ internal fun IsolateHolderService.startLocatorService(context: Context) {
                 val callbackInfo =
                     FlutterCallbackInformation.lookupCallbackInformation(callbackHandle)
 
-                if(callbackInfo == null) {
-                    Log.e("IsolateHolderExtension", "Fatal: failed to find callback");
-                    return;
+                if (callbackInfo == null) {
+                    Log.e("IsolateHolderExtension", "Fatal: failed to find callback")
+                    engine.destroy()
+                    IsolateHolderService.backgroundEngine = null
+                    return
                 }
 
                 val args = DartExecutor.DartCallback(
@@ -54,26 +70,30 @@ internal fun IsolateHolderService.startLocatorService(context: Context) {
                     FlutterInjector.instance().flutterLoader().findAppBundlePath(),
                     callbackInfo
                 )
-                IsolateHolderService.backgroundEngine?.dartExecutor?.executeDartCallback(args)
+                engine.dartExecutor.executeDartCallback(args)
                 isServiceInitialized = true
                 Log.e("IsolateHolderExtension", "service initialized")
             }
+        } catch (e: Exception) {
+            Log.e("IsolateHolderExtension", "Unable to initialize background Flutter engine", e)
+            IsolateHolderService.backgroundEngine?.destroy()
+            IsolateHolderService.backgroundEngine = null
+            isServiceInitialized = false
         } catch (e: UnsatisfiedLinkError) {
             e.printStackTrace()
+            IsolateHolderService.backgroundEngine?.destroy()
+            IsolateHolderService.backgroundEngine = null
+            isServiceInitialized = false
         }
     }
 
-    IsolateHolderService.getBinaryMessenger(context)?.let { binaryMessenger ->
-        backgroundChannel =
-            MethodChannel(
-                binaryMessenger,
-                Keys.BACKGROUND_CHANNEL_ID
-            )
+    IsolateHolderService.backgroundEngine?.let { engine ->
+        backgroundChannel = MethodChannel(
+            engine.dartExecutor.binaryMessenger,
+            Keys.BACKGROUND_CHANNEL_ID
+        )
         try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
-                context.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)
-                == PackageManager.PERMISSION_GRANTED
-            ) {
+            if (context.hasLocationPermission()) {
                 backgroundChannel.setMethodCallHandler(this)
             }
         } catch (e: RuntimeException) {

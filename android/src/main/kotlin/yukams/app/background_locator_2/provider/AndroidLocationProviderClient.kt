@@ -12,7 +12,7 @@ class AndroidLocationProviderClient(context: Context, override var listener: Loc
     private val client: LocationManager? =
             ContextCompat.getSystemService(context, LocationManager::class.java)
 
-    private var overrideLocation: Boolean = false
+    private var bestAccuracy: Float? = null
     private var timeOfLastLocation: Long = 0L
     private var timeBetweenLocation: Long = 0L
 
@@ -55,23 +55,24 @@ class AndroidLocationProviderClient(context: Context, override var listener: Loc
     }
 
     override fun onLocationChanged(location: Location) {
-        overrideLocation = false
         //whenever the expected time period is reached invalidate the last known accuracy
         // so that we don't just receive better and better accuracy and eventually risk receiving
         // only minimal locations
-        if (location.hasAccuracy()) {
-            if (!location.accuracy.isNaN() &&
-                    location.accuracy != 0.0f &&
-                    !location.accuracy.isFinite() &&
-                    !location.accuracy.isInfinite()) {
-                overrideLocation = true
-            }
+        val intervalElapsed = location.time - timeOfLastLocation >= timeBetweenLocation
+        if (intervalElapsed) {
+            bestAccuracy = null
         }
         //ensure that we don't get a lot of events
         // or if enabled, only get more accurate events within mTimeBetweenLocationEvents
-        if (location.time - timeOfLastLocation >= timeBetweenLocation || overrideLocation) {
+        val accuracy = location.accuracy.takeIf {
+            location.hasAccuracy() && it.isFinite() && it > 0.0f
+        }
+        val improvedAccuracy = accuracy != null &&
+            (bestAccuracy == null || accuracy < bestAccuracy!!)
+        if (intervalElapsed || improvedAccuracy) {
             //be sure to store the time of receiving this event !
             timeOfLastLocation = location.time
+            bestAccuracy = accuracy
             //send message to parent containing the location object
             listener?.onLocationUpdated(LocationParserUtil.getLocationMapFromLocation(location))
         }

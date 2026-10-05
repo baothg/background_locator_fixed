@@ -12,6 +12,9 @@
     NSObject<FlutterPluginRegistrar> *_registrar;
     CLLocationManager *_locationManager;
     CLLocation* _lastLocation;
+    NSDictionary *_initialDataDictionary;
+    BOOL _registrationPendingAuthorization;
+    BOOL _initCallbackCalled;
 }
 
 static FlutterPluginRegistrantCallback registerPlugins = nil;
@@ -79,16 +82,26 @@ didFinishLaunchingWithOptions:(NSDictionary *)launchOptions {
 }
 
 -(void)applicationWillTerminate:(UIApplication *)application {
-    [self observeRegionForLocation:_lastLocation];
-    if([PreferencesManager isStopWithTerminate]){
+    if ([PreferencesManager isStopWithTerminate]) {
         [self removeLocator];
+    } else if ([PreferencesManager isServiceRunning]) {
+        [self observeRegionForLocation:_lastLocation];
     }
 }
 
 - (void) observeRegionForLocation:(CLLocation *)location {
-    double distanceFilter = [PreferencesManager getDistanceFilter];
+    if (location == nil || !CLLocationCoordinate2DIsValid(location.coordinate) ||
+        ![CLLocationManager isMonitoringAvailableForClass:[CLCircularRegion class]]) {
+        return;
+    }
+
+    CLLocationDistance maximumRadius = _locationManager.maximumRegionMonitoringDistance;
+    if (maximumRadius <= 0) {
+        return;
+    }
+    CLLocationDistance radius = MIN(MAX([PreferencesManager getDistanceFilter], 100.0), maximumRadius);
     CLRegion* region = [[CLCircularRegion alloc] initWithCenter:location.coordinate
-                                                         radius:distanceFilter
+                                                         radius:radius
                                                      identifier:@"region"];
     region.notifyOnEntry = false;
     region.notifyOnExit = true;
@@ -117,7 +130,51 @@ didFinishLaunchingWithOptions:(NSDictionary *)launchOptions {
 
 - (void)locationManager:(CLLocationManager *)manager didExitRegion:(CLRegion *)region {
     [_locationManager stopMonitoringForRegion:region];
-    [_locationManager startUpdatingLocation];
+    if ([PreferencesManager isServiceRunning]) {
+        [_locationManager startUpdatingLocation];
+    }
+}
+
+- (void)locationManagerDidChangeAuthorization:(CLLocationManager *)manager API_AVAILABLE(ios(14.0)) {
+    [self handleAuthorizationStatus:manager.authorizationStatus];
+}
+
+- (void)locationManager:(CLLocationManager *)manager
+ didChangeAuthorizationStatus:(CLAuthorizationStatus)status {
+    [self handleAuthorizationStatus:status];
+}
+
+- (void)handleAuthorizationStatus:(CLAuthorizationStatus)status {
+    if (!_registrationPendingAuthorization) {
+        return;
+    }
+    if (status == kCLAuthorizationStatusAuthorizedAlways) {
+        _registrationPendingAuthorization = NO;
+        [self setServiceRunning:YES];
+        [_locationManager startUpdatingLocation];
+        [_locationManager startMonitoringSignificantLocationChanges];
+        if (!_initCallbackCalled) {
+            InitPluggable *initPluggable = [[InitPluggable alloc] init];
+            [initPluggable setCallback:[PreferencesManager getCallbackHandle:kInitCallbackKey]];
+            [initPluggable onServiceStart:_initialDataDictionary ?: @{}];
+            _initCallbackCalled = YES;
+        }
+    } else if (status == kCLAuthorizationStatusAuthorizedWhenInUse) {
+        [_locationManager requestAlwaysAuthorization];
+    } else if (status == kCLAuthorizationStatusDenied ||
+               status == kCLAuthorizationStatusRestricted) {
+        _registrationPendingAuthorization = NO;
+        [self setServiceRunning:NO];
+    }
+}
+
+- (void)locationManager:(CLLocationManager *)manager didFailWithError:(NSError *)error {
+    if (error.code == kCLErrorDenied) {
+        _registrationPendingAuthorization = NO;
+        [self setServiceRunning:NO];
+        [_locationManager stopUpdatingLocation];
+        [_locationManager stopMonitoringSignificantLocationChanges];
+    }
 }
 
 #pragma mark LocatorPlugin Methods
@@ -162,12 +219,17 @@ didFinishLaunchingWithOptions:(NSDictionary *)launchOptions {
 - (void)startLocatorService:(int64_t)handle {
     [PreferencesManager setCallbackDispatcherHandle:handle];
     FlutterCallbackInformation *info = [FlutterCallbackCache lookupCallbackInformation:handle];
-    NSAssert(info != nil, @"failed to find callback");
-    
+    if (info == nil || registerPlugins == nil) {
+        [self setServiceRunning:NO];
+        return;
+    }
+
     NSString *entrypoint = info.callbackName;
     NSString *uri = info.callbackLibraryPath;
-    [_headlessRunner runWithEntrypoint:entrypoint libraryURI:uri];
-    NSAssert(registerPlugins != nil, @"failed to set registerPlugins");
+    if (![_headlessRunner runWithEntrypoint:entrypoint libraryURI:uri]) {
+        [self setServiceRunning:NO];
+        return;
+    }
 
     // Once our headless runner has been started, we need to register the application's plugins
     // with the runner in order for them to work on the background isolate. `registerPlugins` is
@@ -185,46 +247,57 @@ didFinishLaunchingWithOptions:(NSDictionary *)launchOptions {
   initialDataDictionary:(NSDictionary*)initialDataDictionary
         disposeCallback:(int64_t)disposeCallback
                settings: (NSDictionary*)settings {
-    [self->_locationManager requestAlwaysAuthorization];
-        
     long accuracyKey = [[settings objectForKey:kSettingsAccuracy] longValue];
     CLLocationAccuracy accuracy = [Util getAccuracy:accuracyKey];
-    double distanceFilter= [[settings objectForKey:kSettingsDistanceFilter] doubleValue];
-    bool  showsBackgroundLocationIndicator=[[settings objectForKey:kSettingsShowsBackgroundLocationIndicator] boolValue];
-    bool  stopWithTerminate=[[settings objectForKey:kSettingsStopWithTerminate] boolValue];
+    double distanceFilter = [[settings objectForKey:kSettingsDistanceFilter] doubleValue];
+    BOOL showsBackgroundLocationIndicator =
+        [[settings objectForKey:kSettingsShowsBackgroundLocationIndicator] boolValue];
+    BOOL stopWithTerminate = [[settings objectForKey:kSettingsStopWithTerminate] boolValue];
 
     _locationManager.desiredAccuracy = accuracy;
     _locationManager.distanceFilter = distanceFilter;
-    
     if (@available(iOS 11.0, *)) {
-      _locationManager.showsBackgroundLocationIndicator = showsBackgroundLocationIndicator;
+        _locationManager.showsBackgroundLocationIndicator = showsBackgroundLocationIndicator;
     }
-    
     if (@available(iOS 9.0, *)) {
         _locationManager.allowsBackgroundLocationUpdates = YES;
     }
-    
+
     [PreferencesManager saveDistanceFilter:distanceFilter];
     [PreferencesManager setStopWithTerminate:stopWithTerminate];
-
     [PreferencesManager setCallbackHandle:callback key:kCallbackKey];
-    
     InitPluggable *initPluggable = [[InitPluggable alloc] init];
     [initPluggable setCallback:initCallback];
-    [initPluggable onServiceStart:initialDataDictionary];
-    
     DisposePluggable *disposePluggable = [[DisposePluggable alloc] init];
     [disposePluggable setCallback:disposeCallback];
-        
-    [_locationManager startUpdatingLocation];
-    [_locationManager startMonitoringSignificantLocationChanges];
+
+    _initialDataDictionary = initialDataDictionary ?: @{};
+    _initCallbackCalled = NO;
+    _registrationPendingAuthorization = YES;
+    [self setServiceRunning:NO];
+
+    CLAuthorizationStatus status;
+    if (@available(iOS 14.0, *)) {
+        status = _locationManager.authorizationStatus;
+    } else {
+        status = [CLLocationManager authorizationStatus];
+    }
+    if (status == kCLAuthorizationStatusNotDetermined) {
+        [_locationManager requestAlwaysAuthorization];
+    }
+    [self handleAuthorizationStatus:status];
 }
 
 - (void)removeLocator {
     if (_locationManager == nil) {
+        [self setServiceRunning:NO];
         return;
     }
-    
+
+    _registrationPendingAuthorization = NO;
+    _initCallbackCalled = NO;
+    _initialDataDictionary = nil;
+    [self setServiceRunning:NO];
     @synchronized (self) {
         [_locationManager stopUpdatingLocation];
         

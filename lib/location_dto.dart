@@ -28,19 +28,21 @@ class LocationDto {
   );
 
   factory LocationDto.fromJson(Map<dynamic, dynamic> json) {
-    bool isLocationMocked =
-        Platform.isAndroid ? json[Keys.ARG_IS_MOCKED] : false;
+    final isLocationMocked =
+        Platform.isAndroid && json[Keys.ARG_IS_MOCKED] == true;
     return LocationDto._(
-      json[Keys.ARG_LATITUDE],
-      json[Keys.ARG_LONGITUDE],
-      json[Keys.ARG_ACCURACY],
-      json[Keys.ARG_ALTITUDE],
-      json[Keys.ARG_SPEED],
-      json[Keys.ARG_SPEED_ACCURACY],
-      json[Keys.ARG_HEADING],
-      json[Keys.ARG_TIME],
+      _asDouble(json[Keys.ARG_LATITUDE]),
+      _asDouble(json[Keys.ARG_LONGITUDE]),
+      _asDouble(json[Keys.ARG_ACCURACY]),
+      _asDouble(json[Keys.ARG_ALTITUDE]),
+      _asDouble(json[Keys.ARG_SPEED]),
+      _asDouble(json[Keys.ARG_SPEED_ACCURACY]),
+      _asDouble(json[Keys.ARG_HEADING]),
+      _asDouble(json[Keys.ARG_TIME]),
       isLocationMocked,
-      json[Keys.ARG_PROVIDER] ?? '',
+      json[Keys.ARG_PROVIDER] is String
+          ? json[Keys.ARG_PROVIDER] as String
+          : '',
     );
   }
 
@@ -64,3 +66,5 @@ class LocationDto {
     return 'LocationDto{latitude: $latitude, longitude: $longitude, accuracy: $accuracy, altitude: $altitude, speed: $speed, speedAccuracy: $speedAccuracy, heading: $heading, time: $time, isMocked: $isMocked, provider: $provider}';
   }
 }
+
+double _asDouble(dynamic value) => value is num ? value.toDouble() : 0.0;
