@@ -18,6 +18,7 @@ class LocationParserUtil {
                 isMocked = location.isFromMockProvider
             }
 
+            @Suppress("UNCHECKED_CAST")
             return hashMapOf(
                     Keys.ARG_IS_MOCKED to isMocked,
                     Keys.ARG_LATITUDE to location.latitude,
@@ -29,7 +30,7 @@ class LocationParserUtil {
                     Keys.ARG_HEADING to location.bearing,
                     Keys.ARG_TIME to location.time.toDouble(),
                     Keys.ARG_PROVIDER to location.provider,
-            )
+            ) as HashMap<Any, Any>
         }
 
         fun getLocationMapFromLocation(location: LocationResult?): HashMap<Any, Any>? {
@@ -44,6 +45,7 @@ class LocationParserUtil {
                 isMocked = firstLocation.isFromMockProvider
             }
 
+            @Suppress("UNCHECKED_CAST")
             return hashMapOf(
                     Keys.ARG_IS_MOCKED to isMocked,
                     Keys.ARG_LATITUDE to firstLocation.latitude,
@@ -53,7 +55,7 @@ class LocationParserUtil {
                     Keys.ARG_SPEED to firstLocation.speed,
                     Keys.ARG_SPEED_ACCURACY to speedAccuracy,
                     Keys.ARG_HEADING to firstLocation.bearing,
-                    Keys.ARG_TIME to firstLocation.time.toDouble())
+                    Keys.ARG_TIME to firstLocation.time.toDouble()) as HashMap<Any, Any>
         }
     }
 }
