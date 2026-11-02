@@ -1,3 +1,17 @@
+## 2.1.0
+* **Behavior change:** `registerLocationUpdate` / `unRegisterLocationUpdate` can now throw `PlatformException` (`SERVICE_START_FAILED`, `LOCATION_PERMISSION_DENIED`, `INVALID_SETTINGS`) instead of resolving silently — wrap calls in try/catch.
+* **Behavior change:** `autoStop` now only unregisters when the app is actually terminated (`detached`), not when it goes to background (`paused`). Apps relying on foreground-only tracking should unregister explicitly on pause.
+* **Fix:** Android notification tap callback (`notificationTapCallback`) now actually fires — it runs in the background isolate, not the main isolate.
+* **Fix:** location tracking now resumes after the process is killed or the device reboots; added `QUICKBOOT_POWERON` and `MY_PACKAGE_REPLACED` triggers (update your app manifest intent-filter, see README).
+* **Fix:** register/unregister race no longer leaks a running service; re-registering while running now applies new callbacks/settings.
+* **Fix:** background engine is no longer destroyed while callbacks are in flight; stuck callbacks can no longer block engine cleanup.
+* **Fix:** wake lock no longer leaks on shutdown and is refreshed on every location update (keeps CPU awake while updates flow).
+* **Fix:** transient location provider errors retry (up to 3x) instead of killing the service.
+* **Feat:** `BackgroundLocator.setErrorReporter` — registers a top-level/static function (background isolate) that receives every caught plugin error `{source, code, message, stack, timestamp}`; errors are queued and delivered even when they happen while the app is killed.
+* **Feat:** `initDataCallback` may contain `wasKilled: true` when the previous tracking session died without a graceful shutdown.
+* **Feat:** more realtime delivery on Android (removed location batching), notification no longer collides with app notification id 1.
+* Upgraded to Kotlin 2.2.20 / AGP 8.11.1; plugin manifest now merges required permissions (`FOREGROUND_SERVICE_LOCATION`, `RECEIVE_BOOT_COMPLETED`, `WAKE_LOCK`, ...).
+
 ## 2.0.6
 * Fixing iOS build
 * Fixing memory leak on Android

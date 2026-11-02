@@ -16,6 +16,8 @@ class Keys {
       'LocatorPlugin.isServiceRunning';
   static const String METHOD_PLUGIN_UPDATE_NOTIFICATION =
       'LocatorPlugin.updateNotification';
+  static const String METHOD_PLUGIN_SET_ERROR_CALLBACK =
+      'LocatorPlugin.setErrorCallback';
 
   static const String ARG_IS_MOCKED = 'is_mocked';
   static const String ARG_LATITUDE = 'latitude';
@@ -35,6 +37,8 @@ class Keys {
   static const String ARG_LOCATION = 'location';
   static const String ARG_SETTINGS = 'settings';
   static const String ARG_CALLBACK_DISPATCHER = 'callbackDispatcher';
+  static const String ARG_ERROR_CALLBACK = 'errorCallback';
+  static const String ARG_ERROR = 'error';
 
   static const String SETTINGS_ACCURACY = 'settings_accuracy';
   static const String SETTINGS_INTERVAL = 'settings_interval';
@@ -66,4 +70,5 @@ class Keys {
   static const String BCM_NOTIFICATION_CLICK = 'BCM_NOTIFICATION_CLICK';
   static const String BCM_INIT = 'BCM_INIT';
   static const String BCM_DISPOSE = 'BCM_DISPOSE';
+  static const String BCM_ERROR = 'BCM_ERROR';
 }

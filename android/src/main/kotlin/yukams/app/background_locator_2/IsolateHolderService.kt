@@ -39,7 +39,7 @@ class IsolateHolderService : MethodChannel.MethodCallHandler, LocationUpdateList
         var backgroundEngine: FlutterEngine? = null
 
         @JvmStatic
-        private val notificationId = 1
+        private val notificationId = 2038471
 
         @JvmStatic
         @Volatile
@@ -47,6 +47,10 @@ class IsolateHolderService : MethodChannel.MethodCallHandler, LocationUpdateList
 
         @JvmStatic
         var isServiceInitialized = false
+
+        @JvmStatic
+        @Volatile
+        var isDispatcherReady = false
 
         fun getBinaryMessenger(context: Context?): BinaryMessenger? {
             val messenger = backgroundEngine?.dartExecutor?.binaryMessenger
@@ -74,61 +78,81 @@ class IsolateHolderService : MethodChannel.MethodCallHandler, LocationUpdateList
                 engine.dartExecutor.binaryMessenger,
                 Keys.BACKGROUND_CHANNEL_ID
             )
-            Handler(context.mainLooper).post {
-                val response = object : MethodChannel.Result {
-                    private var completed = false
+            val response = object : MethodChannel.Result {
+                private var completed = false
 
-                    private fun complete() {
-                        val isFirstCompletion = synchronized(this) {
-                            if (completed) {
-                                false
-                            } else {
-                                completed = true
-                                true
-                            }
-                        }
-                        if (!isFirstCompletion) {
-                            return
-                        }
-                        val shouldDestroy = synchronized(IsolateHolderService::class.java) {
-                            pendingBackgroundCalls = (pendingBackgroundCalls - 1).coerceAtLeast(0)
-                            !isServiceRunning && pendingBackgroundCalls == 0 &&
-                                backgroundEngine === engine
-                        }
-                        if (shouldDestroy) {
-                            scheduleBackgroundEngineDestroy(engine)
+                private fun complete() {
+                    val isFirstCompletion = synchronized(this) {
+                        if (completed) {
+                            false
+                        } else {
+                            completed = true
+                            true
                         }
                     }
-
-                    override fun success(result: Any?) = complete()
-
-                    override fun error(errorCode: String, errorMessage: String?, errorDetails: Any?) =
-                        complete()
-
-                    override fun notImplemented() = complete()
+                    if (!isFirstCompletion) {
+                        return
+                    }
+                    val shouldDestroy = synchronized(IsolateHolderService::class.java) {
+                        pendingBackgroundCalls = (pendingBackgroundCalls - 1).coerceAtLeast(0)
+                        !isServiceRunning && pendingBackgroundCalls == 0 &&
+                            backgroundEngine === engine
+                    }
+                    if (shouldDestroy) {
+                        scheduleBackgroundEngineDestroy(engine)
+                    }
                 }
+
+                override fun success(result: Any?) = complete()
+
+                override fun error(errorCode: String, errorMessage: String?, errorDetails: Any?) {
+                    if (method != Keys.BCM_ERROR) {
+                        ErrorReporter.report(
+                            context, "dart_callback", errorCode, errorMessage,
+                            errorDetails?.toString()
+                        )
+                    }
+                    complete()
+                }
+
+                override fun notImplemented() = complete()
+            }
+            val handler = Handler(context.mainLooper)
+            handler.post {
                 try {
                     channel.invokeMethod(method, arguments, response)
                 } catch (e: Exception) {
-                    Log.e("IsolateHolderService", "Unable to send background callback", e)
+                    if (method != Keys.BCM_ERROR) {
+                        ErrorReporter.report(context, "channel", "INVOKE_FAILED", e)
+                    }
                     response.error("BACKGROUND_LOCATOR_ERROR", e.message, null)
                 }
             }
+            // Force-complete if the Dart side never replies, so pendingBackgroundCalls
+            // cannot stay stuck and block engine cleanup forever
+            handler.postDelayed({
+                response.error("BACKGROUND_LOCATOR_TIMEOUT", "Background callback timed out", null)
+            }, 10000)
         }
 
         private fun scheduleBackgroundEngineDestroy(engine: FlutterEngine) {
             Handler(Looper.getMainLooper()).postDelayed({
-                val shouldDestroy = synchronized(IsolateHolderService::class.java) {
-                    if (isServiceRunning || pendingBackgroundCalls > 0 || backgroundEngine !== engine) {
-                        false
-                    } else {
-                        backgroundEngine = null
-                        isServiceInitialized = false
-                        true
+                try {
+                    val shouldDestroy = synchronized(IsolateHolderService::class.java) {
+                        if (isServiceRunning || pendingBackgroundCalls > 0 || backgroundEngine !== engine) {
+                            false
+                        } else {
+                            backgroundEngine = null
+                            isServiceInitialized = false
+                            isDispatcherReady = false
+                            true
+                        }
                     }
-                }
-                if (shouldDestroy) {
-                    engine.destroy()
+                    if (shouldDestroy) {
+                        engine.destroy()
+                    }
+                } catch (e: Exception) {
+                    Log.e("IsolateHolderService", "Unable to destroy background engine", e)
                 }
             }, 1000)
         }
@@ -144,6 +168,8 @@ class IsolateHolderService : MethodChannel.MethodCallHandler, LocationUpdateList
     private var wakeLockTime = 60 * 60 * 1000L // 1 hour default wake lock time
     private var wakeLock: PowerManager.WakeLock? = null
     private var locatorClient: BLLocationProvider? = null
+    private var locationRequest: LocationRequestOptions? = null
+    private var locationErrorRetries = 0
     internal lateinit var backgroundChannel: MethodChannel
     internal var context: Context? = null
     private var pluggables: ArrayList<Pluggable> = ArrayList()
@@ -154,8 +180,16 @@ class IsolateHolderService : MethodChannel.MethodCallHandler, LocationUpdateList
 
     override fun onCreate() {
         super.onCreate()
-        startForeground(notificationId, getNotification())
-        startLocatorService(this)
+        try {
+            startForeground(notificationId, getNotification())
+        } catch (e: Exception) {
+            ErrorReporter.report(this, "service_create", "START_FOREGROUND_FAILED", e)
+        }
+        try {
+            startLocatorService(this)
+        } catch (e: Exception) {
+            ErrorReporter.report(this, "service_create", "ENGINE_INIT_FAILED", e)
+        }
     }
 
     private fun start() {
@@ -215,6 +249,7 @@ class IsolateHolderService : MethodChannel.MethodCallHandler, LocationUpdateList
         if (commandIntent == null) {
             isServiceRunning = false
             PreferencesManager.setTrackingEnabled(this, false)
+            PreferencesManager.setSessionActive(this, false)
             stopForeground(true)
             stopSelf(startId)
             return START_NOT_STICKY
@@ -251,9 +286,10 @@ class IsolateHolderService : MethodChannel.MethodCallHandler, LocationUpdateList
                 }
             }
         } catch (e: Exception) {
-            Log.e("IsolateHolderService", "Unable to process service command", e)
+            ErrorReporter.report(this, "service_command", "COMMAND_FAILED", e)
             isServiceRunning = false
             PreferencesManager.setTrackingEnabled(this, false)
+            PreferencesManager.setSessionActive(this, false)
             locatorClient?.removeLocationUpdates()
             releaseWakeLock()
             stopForeground(true)
@@ -277,6 +313,10 @@ class IsolateHolderService : MethodChannel.MethodCallHandler, LocationUpdateList
 
     private fun startHolderService(intent: Intent) {
         Log.d("IsolateHolderService", "startHolderService")
+        // If a previous session never got a graceful shutdown, the process was
+        // killed: flag it so the init callback can report wasKilled to Dart
+        PreferencesManager.setWasKilled(this, PreferencesManager.isSessionActive(this))
+        PreferencesManager.setSessionActive(this, true)
         notificationChannelName =
             intent.getStringExtra(Keys.SETTINGS_ANDROID_NOTIFICATION_CHANNEL_NAME)
                 ?: notificationChannelName
@@ -295,8 +335,11 @@ class IsolateHolderService : MethodChannel.MethodCallHandler, LocationUpdateList
             .coerceAtLeast(1) * 60 * 1000L
 
         startForeground(notificationId, getNotification())
+        val request = getLocationRequest(intent)
+        locationRequest = request
+        locationErrorRetries = 0
         locatorClient = getLocationClient(this)
-        locatorClient?.requestLocationUpdates(getLocationRequest(intent))
+        locatorClient?.requestLocationUpdates(request)
 
         pluggables.clear()
         if (intent.hasExtra(Keys.SETTINGS_INIT_PLUGGABLE)) {
@@ -311,12 +354,17 @@ class IsolateHolderService : MethodChannel.MethodCallHandler, LocationUpdateList
 
     private fun acquireWakeLock() {
         try {
-            wakeLock = (getSystemService(Context.POWER_SERVICE) as PowerManager)
+            // Reuse the same WakeLock object: release + re-acquire refreshes its
+            // timeout, so the lock stays valid while location updates keep flowing
+            // and dies on its own if updates stop for wakeLockTime
+            val lock = wakeLock ?: (getSystemService(Context.POWER_SERVICE) as PowerManager)
                 .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, WAKELOCK_TAG)
-                .apply {
-                    setReferenceCounted(false)
-                    acquire(wakeLockTime)
-                }
+                .apply { setReferenceCounted(false) }
+            if (lock.isHeld) {
+                lock.release()
+            }
+            lock.acquire(wakeLockTime)
+            wakeLock = lock
         } catch (e: SecurityException) {
             Log.w("IsolateHolderService", "Wake lock permission is unavailable", e)
         }
@@ -335,6 +383,8 @@ class IsolateHolderService : MethodChannel.MethodCallHandler, LocationUpdateList
         Log.d("IsolateHolderService", "shutdownHolderService")
         isServiceRunning = false
         PreferencesManager.setTrackingEnabled(this, false)
+        PreferencesManager.setSessionActive(this, false)
+        PreferencesManager.setWasKilled(this, false)
         releaseWakeLock()
         locatorClient?.removeLocationUpdates()
         locatorClient = null
@@ -389,13 +439,21 @@ class IsolateHolderService : MethodChannel.MethodCallHandler, LocationUpdateList
             return
         }
         isServiceInitialized = true
+        isDispatcherReady = true
         result.success(null)
+
+        // The dispatcher is up: flush errors queued while no engine was alive
+        ErrorReporter.flushQueue(this)
     }
 
     override fun onDestroy() {
         isServiceRunning = false
-        releaseWakeLock()
-        locatorClient?.removeLocationUpdates()
+        try {
+            releaseWakeLock()
+            locatorClient?.removeLocationUpdates()
+        } catch (e: Exception) {
+            ErrorReporter.report(this, "service_destroy", "DESTROY_FAILED", e)
+        }
         locatorClient = null
         backgroundEngine?.let { scheduleBackgroundEngineDestroy(it) }
         super.onDestroy()
@@ -422,6 +480,8 @@ class IsolateHolderService : MethodChannel.MethodCallHandler, LocationUpdateList
             //https://github.com/flutter/plugins/pull/1641/commits/4358fbba3327f1fa75bc40df503ca5341fdbb77d
             // new version of flutter can not invoke method from background thread
             if (location != null) {
+                locationErrorRetries = 0
+                acquireWakeLock()
                 val callback = context?.let {
                     PreferencesManager.getCallbackHandle(it, Keys.CALLBACK_HANDLE_KEY)
                 } ?: return
@@ -432,15 +492,24 @@ class IsolateHolderService : MethodChannel.MethodCallHandler, LocationUpdateList
                 sendLocationEvent(result)
             }
         } catch (e: Exception) {
-            Log.e("IsolateHolderService", "Unable to dispatch location update", e)
+            context?.let {
+                ErrorReporter.report(it, "location_dispatch", "DISPATCH_FAILED", e)
+            }
         }
     }
 
     override fun onLocationError(error: Exception) {
         Handler(mainLooper).post {
-            if (isServiceRunning) {
-                Log.e("IsolateHolderService", "Location updates failed", error)
+            if (!isServiceRunning) {
+                return@post
+            }
+            if (error is SecurityException || locationErrorRetries >= 3) {
+                ErrorReporter.report(this, "location_provider", "LOCATION_ERROR", error)
                 shutdownHolderService()
+            } else {
+                locationErrorRetries++
+                Log.w("IsolateHolderService", "Location updates failed, retrying", error)
+                locationRequest?.let { locatorClient?.requestLocationUpdates(it) }
             }
         }
     }

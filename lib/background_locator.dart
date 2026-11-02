@@ -12,6 +12,8 @@ import 'callback_dispatcher.dart';
 import 'keys.dart';
 import 'location_dto.dart';
 
+typedef ErrorReporterCallback = void Function(Map<String, dynamic> error);
+
 class BackgroundLocator {
   static const MethodChannel _channel = const MethodChannel(Keys.CHANNEL_ID);
 
@@ -41,11 +43,6 @@ class BackgroundLocator {
     IOSSettings iosSettings = const IOSSettings(),
   }) async {
     _removeAutoStopObserver();
-    if (autoStop) {
-      WidgetsFlutterBinding.ensureInitialized().addObserver(
-        _autoStopHandler = AutoStopHandler(),
-      );
-    }
 
     final args = SettingsUtil.getArgumentsMap(
       callback: callback,
@@ -55,6 +52,12 @@ class BackgroundLocator {
       androidSettings: androidSettings,
       iosSettings: iosSettings,
     );
+
+    if (autoStop) {
+      WidgetsFlutterBinding.ensureInitialized().addObserver(
+        _autoStopHandler = AutoStopHandler(),
+      );
+    }
 
     try {
       await _channel.invokeMethod(
@@ -97,6 +100,29 @@ class BackgroundLocator {
           Keys.METHOD_PLUGIN_IS_SERVICE_RUNNING,
         ) ??
         false;
+  }
+
+  /// Registers a callback invoked when the plugin catches an exception,
+  /// including failures that happen while the app is in the background or
+  /// was killed. [callback] must be a top-level or static function and runs
+  /// in the background isolate. Pass null to unregister.
+  static Future<void> setErrorReporter(ErrorReporterCallback? callback) async {
+    int? handle;
+    if (callback != null) {
+      final CallbackHandle? callbackHandle =
+          PluginUtilities.getCallbackHandle(callback);
+      if (callbackHandle == null) {
+        throw ArgumentError.value(
+          callback,
+          'callback',
+          'Error reporter must be a top-level or static function.',
+        );
+      }
+      handle = callbackHandle.toRawHandle();
+    }
+    await _channel.invokeMethod(Keys.METHOD_PLUGIN_SET_ERROR_CALLBACK, {
+      Keys.ARG_ERROR_CALLBACK: handle,
+    });
   }
 
   static Future<void> updateNotificationText({

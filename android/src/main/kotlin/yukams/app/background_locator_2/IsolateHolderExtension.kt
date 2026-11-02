@@ -39,6 +39,7 @@ internal fun IsolateHolderService.startLocatorService(context: Context) {
             IsolateHolderService.backgroundEngine?.destroy()
             IsolateHolderService.backgroundEngine = null
             isServiceInitialized = false
+            IsolateHolderService.isDispatcherReady = false
         } else {
             isServiceInitialized = true
         }
@@ -75,15 +76,17 @@ internal fun IsolateHolderService.startLocatorService(context: Context) {
                 Log.e("IsolateHolderExtension", "service initialized")
             }
         } catch (e: Exception) {
-            Log.e("IsolateHolderExtension", "Unable to initialize background Flutter engine", e)
+            ErrorReporter.report(context, "engine_init", "ENGINE_INIT_FAILED", e)
             IsolateHolderService.backgroundEngine?.destroy()
             IsolateHolderService.backgroundEngine = null
             isServiceInitialized = false
+            IsolateHolderService.isDispatcherReady = false
         } catch (e: UnsatisfiedLinkError) {
-            e.printStackTrace()
+            ErrorReporter.report(context, "engine_init", "ENGINE_LINK_FAILED", e)
             IsolateHolderService.backgroundEngine?.destroy()
             IsolateHolderService.backgroundEngine = null
             isServiceInitialized = false
+            IsolateHolderService.isDispatcherReady = false
         }
     }
 

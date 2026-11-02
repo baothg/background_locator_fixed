@@ -12,6 +12,27 @@ class Keys {
         val TRACKING_ENABLED_KEY = "TRACKING_ENABLED_KEY"
 
         @JvmStatic
+        val SESSION_ACTIVE_KEY = "SESSION_ACTIVE_KEY"
+
+        @JvmStatic
+        val WAS_KILLED_KEY = "WAS_KILLED_KEY"
+
+        @JvmStatic
+        val ERROR_CALLBACK_HANDLE_KEY = "ERROR_CALLBACK_HANDLE_KEY"
+
+        @JvmStatic
+        val ERROR_QUEUE_KEY = "ERROR_QUEUE_KEY"
+
+        @JvmStatic
+        val ARG_WAS_KILLED = "wasKilled"
+
+        @JvmStatic
+        val ARG_ERROR_CALLBACK = "errorCallback"
+
+        @JvmStatic
+        val ARG_ERROR = "error"
+
+        @JvmStatic
         val CALLBACK_HANDLE_KEY = "CALLBACK_HANDLE_KEY"
 
         @JvmStatic
@@ -52,6 +73,9 @@ class Keys {
 
         @JvmStatic
         val METHOD_PLUGIN_UPDATE_NOTIFICATION = "LocatorPlugin.updateNotification"
+
+        @JvmStatic
+        val METHOD_PLUGIN_SET_ERROR_CALLBACK = "LocatorPlugin.setErrorCallback"
 
         @JvmStatic
         val ARG_INIT_CALLBACK = "initCallback"
@@ -158,6 +182,9 @@ class Keys {
 
         @JvmStatic
         val BCM_DISPOSE = "BCM_DISPOSE"
+
+        @JvmStatic
+        val BCM_ERROR = "BCM_ERROR"
 
         @JvmStatic
         val NOTIFICATION_ACTION = "com.yukams.background_locator_2.notification"

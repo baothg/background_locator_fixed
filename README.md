@@ -19,6 +19,37 @@ Refer to [wiki](https://github.com/Yukams/background_locator_fixed/wiki) page fo
 * [LocationSettings options](https://github.com/Yukams/background_locator_fixed/wiki/LocationSettings-options)
 * [Restart service on device reboot (Android only)](https://github.com/Yukams/background_locator_fixed/wiki/Restart-service-on-device-reboot)
 
+## Important notes (v2.1.0+)
+
+**All callbacks run in a background isolate**, not the main isolate: the location callback, `initCallback`, `disposeCallback`, `notificationTapCallback` and the error reporter. They cannot touch the UI directly — use `IsolateNameServer` + `SendPort` to forward data to your main isolate.
+
+**`registerLocationUpdate` / `unRegisterLocationUpdate` may throw** `PlatformException` on failure (e.g. `SERVICE_START_FAILED`, `LOCATION_PERMISSION_DENIED`). Wrap them in try/catch instead of assuming success.
+
+**`autoStop` semantics:** when `autoStop: true`, tracking stops only when the app is *terminated* (swiped away), not when it is merely backgrounded. For tracking that survives the app being killed, leave `autoStop: false`.
+
+**Android manifest:** the plugin merges location/foreground-service permissions automatically, but the service and boot receiver must still be declared in your app manifest. To get tracking back after reboot and app updates, declare all three actions:
+
+```xml
+<receiver
+    android:name="yukams.app.background_locator_2.BootBroadcastReceiver"
+    android:enabled="true"
+    android:exported="false">
+    <intent-filter>
+        <action android:name="android.intent.action.BOOT_COMPLETED" />
+        <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+        <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+    </intent-filter>
+</receiver>
+```
+
+Tracking across process death and reboot requires `ACCESS_BACKGROUND_LOCATION` — a "while in use" grant is not enough to restart from boot.
+
+**`initCallback` data** may contain `wasKilled: true` if the previous tracking session was killed by the OS (process death, crash) instead of a graceful unregister — re-run your cleanup there.
+
+**Error reporting:** `BackgroundLocator.setErrorReporter(fn)` registers a top-level/static function receiving `{source, code, message, stack, timestamp}` for every caught plugin error — including failures that happen while the app is killed (queued, delivered on next dispatcher start). Use it to forward to Crashlytics or your own reporter; pass `null` to unregister.
+
+**OEM battery killers** (Xiaomi/OPPO/vivo/Samsung...) may still kill the foreground service despite `START_STICKY`. If your use case needs reliable background tracking, prompt users to disable battery optimization (`ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`) and enable autostart in OEM settings — this part is app-side UX, the plugin cannot do it.
+
 ##  License
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details
 

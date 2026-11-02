@@ -23,7 +23,6 @@ class GoogleLocationProviderClient(context: Context, override var listener: Loca
 
         locationRequest.interval = request.interval
         locationRequest.fastestInterval = request.interval
-        locationRequest.maxWaitTime = request.interval
         locationRequest.priority = request.accuracy
         locationRequest.smallestDisplacement = request.distanceFilter
 

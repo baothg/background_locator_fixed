@@ -33,7 +33,11 @@ class BackgroundLocatorPlugin
             delay: Long
         ) {
             Handler(context.mainLooper).postDelayed({
-                result?.success(value())
+                try {
+                    result?.success(value())
+                } catch (e: Exception) {
+                    ErrorReporter.report(context, "method_call", "DELAYED_RESULT_FAILED", e)
+                }
             }, delay)
         }
 
@@ -43,9 +47,9 @@ class BackgroundLocatorPlugin
             args: Map<Any, Any>,
             result: Result?
         ) {
-            if (IsolateHolderService.isServiceRunning) {
-                Log.d("BackgroundLocatorPlugin", "Locator service is already running")
-                result?.success(true)
+            val settings = args[Keys.ARG_SETTINGS] as? Map<*, *>
+            if (settings == null) {
+                result?.error("INVALID_SETTINGS", "Missing location settings.", null)
                 return
             }
 
@@ -55,12 +59,6 @@ class BackgroundLocatorPlugin
                     "registerLocationUpdate requires location permission.",
                     null
                 )
-                return
-            }
-
-            val settings = args[Keys.ARG_SETTINGS] as? Map<*, *>
-            if (settings == null) {
-                result?.error("INVALID_SETTINGS", "Missing location settings.", null)
                 return
             }
 
@@ -97,21 +95,40 @@ class BackgroundLocatorPlugin
             )
 
             PreferencesManager.saveSettings(context, args)
+
+            if (IsolateHolderService.isServiceRunning) {
+                // Service is already running: apply the new callbacks and settings
+                // (location interval/notification need a restart to take effect)
+                Log.d("BackgroundLocatorPlugin", "Locator service is already running, updated callbacks")
+                result?.success(true)
+                return
+            }
+
             PreferencesManager.setTrackingEnabled(context, true)
             try {
                 startIsolateService(context, settings)
             } catch (e: Exception) {
                 PreferencesManager.setTrackingEnabled(context, false)
-                Log.e("BackgroundLocatorPlugin", "Unable to start locator service", e)
+                ErrorReporter.report(context, "register", "SERVICE_START_FAILED", e)
                 result?.error("SERVICE_START_FAILED", e.message, null)
                 return
             }
 
-            sendResultWithDelay(context, result, {
-                if (!IsolateHolderService.isServiceRunning) {
-                    PreferencesManager.setTrackingEnabled(context, false)
+            Handler(context.mainLooper).postDelayed({
+                try {
+                    if (IsolateHolderService.isServiceRunning) {
+                        result?.success(true)
+                    } else {
+                        PreferencesManager.setTrackingEnabled(context, false)
+                        result?.error(
+                            "SERVICE_START_FAILED",
+                            "Locator service failed to start",
+                            null
+                        )
+                    }
+                } catch (e: Exception) {
+                    ErrorReporter.report(context, "register", "RESULT_FAILED", e)
                 }
-                true
             }, 1000)
         }
 
@@ -193,9 +210,10 @@ class BackgroundLocatorPlugin
 
         @JvmStatic
         private fun unRegisterPlugin(context: Context, result: Result?) {
+            val wasTracking = PreferencesManager.isTrackingEnabled(context)
             PreferencesManager.setTrackingEnabled(context, false)
-            if (!IsolateHolderService.isServiceRunning) {
-                // The service is not running
+            if (!IsolateHolderService.isServiceRunning && !wasTracking) {
+                // The service is not running and no start is pending
                 Log.d("BackgroundLocatorPlugin", "Locator service is not running, nothing to stop")
                 result?.success(true)
                 return
@@ -258,7 +276,7 @@ class BackgroundLocatorPlugin
             try {
                 startIsolateService(context, settings)
             } catch (e: Exception) {
-                Log.e("BackgroundLocatorPlugin", "Unable to restart locator after boot", e)
+                ErrorReporter.report(context, "boot", "BOOT_RESTART_FAILED", e)
             }
         }
     }
@@ -299,10 +317,25 @@ class BackgroundLocatorPlugin
                         result.success(true)
                     }
                 }
+                Keys.METHOD_PLUGIN_SET_ERROR_CALLBACK -> {
+                    val handle = (call.arguments as? Map<*, *>)
+                        ?.get(Keys.ARG_ERROR_CALLBACK) as? Number
+                    PreferencesManager.setCallbackHandle(
+                        currentContext,
+                        Keys.ERROR_CALLBACK_HANDLE_KEY,
+                        handle?.toLong()
+                    )
+                    // A reporter was just registered while the engine is up:
+                    // deliver anything queued in the meantime
+                    if (handle != null && IsolateHolderService.isDispatcherReady) {
+                        ErrorReporter.flushQueue(currentContext)
+                    }
+                    result.success(true)
+                }
                 else -> result.notImplemented()
             }
         } catch (e: Exception) {
-            Log.e("BackgroundLocatorPlugin", "Method call failed: ${call.method}", e)
+            ErrorReporter.report(currentContext, "method_call", call.method, e)
             result.error("BACKGROUND_LOCATOR_ERROR", e.message, null)
         }
     }
@@ -314,14 +347,14 @@ class BackgroundLocatorPlugin
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         channel?.setMethodCallHandler(null)
         channel = null
+        context = null
     }
 
     private fun onAttachedToEngine(context: Context, messenger: BinaryMessenger) {
-        val plugin = BackgroundLocatorPlugin()
-        plugin.context = context
+        this.context = context
 
         channel = MethodChannel(messenger, Keys.CHANNEL_ID)
-        channel?.setMethodCallHandler(plugin)
+        channel?.setMethodCallHandler(this)
     }
 
     override fun onNewIntent(intent: Intent): Boolean {

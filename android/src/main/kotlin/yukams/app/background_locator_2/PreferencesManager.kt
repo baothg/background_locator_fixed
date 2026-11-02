@@ -151,6 +151,37 @@ class PreferencesManager {
         }
 
         @JvmStatic
+        fun setSessionActive(context: Context, active: Boolean) {
+            context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+                .edit()
+                .putBoolean(Keys.SESSION_ACTIVE_KEY, active)
+                .apply()
+        }
+
+        @JvmStatic
+        fun isSessionActive(context: Context): Boolean =
+            context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+                .getBoolean(Keys.SESSION_ACTIVE_KEY, false)
+
+        @JvmStatic
+        fun setWasKilled(context: Context, killed: Boolean) {
+            context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+                .edit()
+                .putBoolean(Keys.WAS_KILLED_KEY, killed)
+                .apply()
+        }
+
+        @JvmStatic
+        fun consumeWasKilled(context: Context): Boolean {
+            val preferences = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+            val killed = preferences.getBoolean(Keys.WAS_KILLED_KEY, false)
+            if (killed) {
+                preferences.edit().putBoolean(Keys.WAS_KILLED_KEY, false).apply()
+            }
+            return killed
+        }
+
+        @JvmStatic
         fun setCallbackHandle(context: Context, key: String, handle: Long?) {
             if (handle == null) {
                 context.getSharedPreferences(Keys.SHARED_PREFERENCES_KEY, Context.MODE_PRIVATE)
@@ -195,6 +226,37 @@ class PreferencesManager {
                     .getString(key, null)
             val type = object : TypeToken<Map<*, *>>() {}.type
             return Gson().fromJson(initialDataStr, type)
+        }
+
+        private const val MAX_QUEUED_ERRORS = 20
+
+        @JvmStatic
+        fun appendError(context: Context, error: Map<Any, Any>) {
+            val preferences = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+            val queue = readErrorQueue(preferences).toMutableList()
+            queue.add(error)
+            preferences.edit()
+                .putString(Keys.ERROR_QUEUE_KEY, Gson().toJson(queue.takeLast(MAX_QUEUED_ERRORS)))
+                .apply()
+        }
+
+        @JvmStatic
+        fun drainErrors(context: Context): List<Map<*, *>> {
+            val preferences = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+            if (!preferences.contains(Keys.ERROR_QUEUE_KEY)) {
+                return emptyList()
+            }
+            val queue = readErrorQueue(preferences)
+            preferences.edit().remove(Keys.ERROR_QUEUE_KEY).apply()
+            return queue
+        }
+
+        private fun readErrorQueue(preferences: android.content.SharedPreferences): List<Map<*, *>> {
+            val json = preferences.getString(Keys.ERROR_QUEUE_KEY, null) ?: return emptyList()
+            val type = object : TypeToken<List<Map<*, *>>>() {}.type
+            return runCatching {
+                Gson().fromJson<List<Map<*, *>>>(json, type) ?: emptyList()
+            }.getOrDefault(emptyList())
         }
     }
 }

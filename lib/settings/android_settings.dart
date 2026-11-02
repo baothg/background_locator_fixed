@@ -52,7 +52,7 @@ class AndroidSettings extends LocatorSettings {
   ///
   /// [androidNotificationSettings] Specific setting for android notification.
   ///
-  /// [wakeLockTime] Time for living service in background in minutes. Only applies in android. Default is 60 minute.
+  /// [wakeLockTime] Wake lock timeout in minutes, refreshed on every location update — the CPU stays awake while updates keep flowing and the lock expires only if no update arrives within this window. Only applies in android. Default is 60 minute.
   const AndroidSettings({
     LocationAccuracy accuracy = LocationAccuracy.NAVIGATION,
     this.interval = 5,

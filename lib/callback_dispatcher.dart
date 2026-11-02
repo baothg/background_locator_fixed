@@ -46,7 +46,11 @@ void callbackDispatcher() {
       );
       final Map<dynamic, dynamic>? data = args[Keys.ARG_INIT_DATA_CALLBACK];
       if (initCallback != null) {
-        await initCallback(data);
+        await initCallback(
+          data == null
+              ? <String, dynamic>{}
+              : Map<String, dynamic>.from(data),
+        );
       }
     } else if (Keys.BCM_DISPOSE == call.method) {
       final Map<dynamic, dynamic> args = call.arguments;
@@ -56,6 +60,22 @@ void callbackDispatcher() {
       );
       if (disposeCallback != null) {
         await disposeCallback();
+      }
+    } else if (Keys.BCM_ERROR == call.method) {
+      final Map<dynamic, dynamic> args = call.arguments;
+      final Function? errorCallback = _getCallbackFromArguments(
+        args,
+        Keys.ARG_ERROR_CALLBACK,
+      );
+      if (errorCallback != null) {
+        try {
+          final error = args[Keys.ARG_ERROR];
+          await errorCallback(
+            error is Map ? Map<String, dynamic>.from(error) : error,
+          );
+        } catch (_) {
+          // Never let the error reporter itself fail the dispatcher
+        }
       }
     }
   });

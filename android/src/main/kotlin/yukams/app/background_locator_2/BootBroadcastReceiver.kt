@@ -7,13 +7,17 @@ import android.util.Log
 
 class BootBroadcastReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        if (intent.action != Intent.ACTION_BOOT_COMPLETED) {
+        // QUICKBOOT_POWERON is sent instead of BOOT_COMPLETED on some OEMs
+        // (Xiaomi, HTC); MY_PACKAGE_REPLACED resumes tracking after an app update
+        if (intent.action != Intent.ACTION_BOOT_COMPLETED &&
+            intent.action != "android.intent.action.QUICKBOOT_POWERON" &&
+            intent.action != Intent.ACTION_MY_PACKAGE_REPLACED) {
             return
         }
         try {
             BackgroundLocatorPlugin.registerAfterBoot(context)
-        } catch (e: RuntimeException) {
-            Log.e("BootBroadcastReceiver", "Unable to restart locator after boot", e)
+        } catch (e: Exception) {
+            ErrorReporter.report(context, "boot", "BOOT_RESTART_FAILED", e)
         }
     }
 }
