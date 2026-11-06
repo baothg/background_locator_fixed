@@ -68,7 +68,29 @@ class IsolateHolderService : MethodChannel.MethodCallHandler, LocationUpdateList
         internal fun hasPendingBackgroundCalls(): Boolean =
             synchronized(IsolateHolderService::class.java) { pendingBackgroundCalls > 0 }
 
-        fun invokeBackgroundMethod(context: Context, method: String, arguments: Any?) {
+        fun invokeBackgroundMethod(
+            context: Context,
+            method: String,
+            arguments: Any?,
+            dispatcherRetries: Int = 20
+        ) {
+            // Messages sent before the Dart dispatcher registers its handler get
+            // a notImplemented reply and would be silently dropped — retry
+            // briefly instead, so a fresh engine cannot swallow BCM_INIT or the
+            // first location updates after a process-kill restart
+            if (!isDispatcherReady && dispatcherRetries > 0) {
+                Handler(context.mainLooper).postDelayed({
+                    invokeBackgroundMethod(context, method, arguments, dispatcherRetries - 1)
+                }, 500)
+                return
+            }
+            if (!isDispatcherReady) {
+                ErrorReporter.report(
+                    context, "channel", "DISPATCHER_NOT_READY",
+                    "Dropped $method: dispatcher never became ready", null
+                )
+                return
+            }
             val engine = synchronized(IsolateHolderService::class.java) {
                 val currentEngine = backgroundEngine ?: return
                 pendingBackgroundCalls++

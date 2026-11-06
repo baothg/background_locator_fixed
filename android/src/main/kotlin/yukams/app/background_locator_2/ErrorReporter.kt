@@ -11,6 +11,10 @@ import android.util.Log
  */
 internal object ErrorReporter {
     private const val TAG = "ErrorReporter"
+    private const val DEDUPE_WINDOW_MS = 60_000L
+
+    private var lastReportCode: String? = null
+    private var lastReportAt = 0L
 
     fun report(context: Context, source: String, code: String, throwable: Throwable) {
         report(context, source, code, throwable.message, throwable.stackTraceToString())
@@ -25,6 +29,20 @@ internal object ErrorReporter {
     ) {
         try {
             Log.e(TAG, "[$source] $code: $message")
+            // Suppress repeats of the same code so a recurring failure cannot
+            // flood the reporter or the persisted queue
+            val now = System.currentTimeMillis()
+            val isDuplicate = synchronized(this) {
+                val dup = code == lastReportCode && now - lastReportAt < DEDUPE_WINDOW_MS
+                if (!dup) {
+                    lastReportCode = code
+                    lastReportAt = now
+                }
+                dup
+            }
+            if (isDuplicate) {
+                return
+            }
             val entry = hashMapOf<Any, Any>(
                 "source" to source,
                 "code" to code,

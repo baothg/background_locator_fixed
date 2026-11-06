@@ -120,6 +120,11 @@ class BackgroundLocatorPlugin
                         result?.success(true)
                     } else {
                         PreferencesManager.setTrackingEnabled(context, false)
+                        // The START intent was already dispatched: if the service
+                        // materializes after this check, it must not keep running
+                        // as a zombie with trackingEnabled=false (which would also
+                        // break the restart-after-kill path)
+                        stopIsolateService(context)
                         result?.error(
                             "SERVICE_START_FAILED",
                             "Locator service failed to start",
@@ -198,7 +203,15 @@ class BackgroundLocatorPlugin
             val intent = Intent(context, IsolateHolderService::class.java)
             intent.action = IsolateHolderService.ACTION_SHUTDOWN
             Log.d("BackgroundLocatorPlugin", "stopIsolateService => Shutting down locator plugin")
-            ContextCompat.startForegroundService(context, intent)
+            try {
+                ContextCompat.startForegroundService(context, intent)
+            } catch (e: RuntimeException) {
+                // FGS-start is restricted on Android 12+ when the app is in the
+                // background and no service is up yet; a shutdown does not need
+                // foreground, so a plain startService is a safe fallback
+                ErrorReporter.report(context, "unregister", "SHUTDOWN_FGS_DENIED", e)
+                context.startService(intent)
+            }
         }
 
         @JvmStatic

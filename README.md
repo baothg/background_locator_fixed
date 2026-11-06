@@ -23,6 +23,10 @@ Refer to [wiki](https://github.com/Yukams/background_locator_fixed/wiki) page fo
 
 **All callbacks run in a background isolate**, not the main isolate: the location callback, `initCallback`, `disposeCallback`, `notificationTapCallback` and the error reporter. They cannot touch the UI directly — use `IsolateNameServer` + `SendPort` to forward data to your main isolate.
 
+**Do not call plugin APIs from inside a callback.** `initialize()`, `registerLocationUpdate()` etc. only work on the main isolate — calling them from within `initCallback`/location/dispose/error callbacks throws `MissingPluginException` because the headless engine has no plugin channel. Call `initialize()` once on the main isolate; inside callbacks only re-setup state (or use the `wasKilled` flag) — the dispatcher already re-initialized itself on resume.
+
+**Keep callbacks fast (<10s).** A callback that does not return within 10 seconds trips `BACKGROUND_LOCATOR_TIMEOUT` and is reported to the error reporter. Persist data quickly and return; offload heavy work (network calls, big writes) to a queue processed elsewhere. Repeated errors with the same `code` are deduplicated to one report per 60 seconds.
+
 **`registerLocationUpdate` / `unRegisterLocationUpdate` may throw** `PlatformException` on failure (e.g. `SERVICE_START_FAILED`, `LOCATION_PERMISSION_DENIED`). Wrap them in try/catch instead of assuming success.
 
 **`autoStop` semantics:** when `autoStop: true`, tracking stops only when the app is *terminated* (swiped away), not when it is merely backgrounded. For tracking that survives the app being killed, leave `autoStop: false`.
