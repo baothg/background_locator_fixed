@@ -100,10 +100,14 @@ class IsolateHolderService : MethodChannel.MethodCallHandler, LocationUpdateList
                 engine.dartExecutor.binaryMessenger,
                 Keys.BACKGROUND_CHANNEL_ID
             )
+            val handler = Handler(context.mainLooper)
             val response = object : MethodChannel.Result {
                 private var completed = false
+                val timeout = Runnable {
+                    error("BACKGROUND_LOCATOR_TIMEOUT", "Background callback timed out: $method", null)
+                }
 
-                private fun complete() {
+                private fun complete(): Boolean {
                     val isFirstCompletion = synchronized(this) {
                         if (completed) {
                             false
@@ -113,8 +117,9 @@ class IsolateHolderService : MethodChannel.MethodCallHandler, LocationUpdateList
                         }
                     }
                     if (!isFirstCompletion) {
-                        return
+                        return false
                     }
+                    handler.removeCallbacks(timeout)
                     val shouldDestroy = synchronized(IsolateHolderService::class.java) {
                         pendingBackgroundCalls = (pendingBackgroundCalls - 1).coerceAtLeast(0)
                         !isServiceRunning && pendingBackgroundCalls == 0 &&
@@ -123,23 +128,29 @@ class IsolateHolderService : MethodChannel.MethodCallHandler, LocationUpdateList
                     if (shouldDestroy) {
                         scheduleBackgroundEngineDestroy(engine)
                     }
+                    return true
                 }
 
-                override fun success(result: Any?) = complete()
+                override fun success(result: Any?) {
+                    complete()
+                }
 
                 override fun error(errorCode: String, errorMessage: String?, errorDetails: Any?) {
-                    if (method != Keys.BCM_ERROR) {
+                    if (complete() && method != Keys.BCM_ERROR) {
                         ErrorReporter.report(
                             context, "dart_callback", errorCode, errorMessage,
                             errorDetails?.toString()
                         )
                     }
-                    complete()
                 }
 
-                override fun notImplemented() = complete()
+                override fun notImplemented() {
+                    complete()
+                }
             }
-            val handler = Handler(context.mainLooper)
+            // Force-complete if the Dart side never replies, so pendingBackgroundCalls
+            // cannot stay stuck and block engine cleanup forever
+            handler.postDelayed(response.timeout, 10000)
             handler.post {
                 try {
                     channel.invokeMethod(method, arguments, response)
@@ -150,11 +161,6 @@ class IsolateHolderService : MethodChannel.MethodCallHandler, LocationUpdateList
                     response.error("BACKGROUND_LOCATOR_ERROR", e.message, null)
                 }
             }
-            // Force-complete if the Dart side never replies, so pendingBackgroundCalls
-            // cannot stay stuck and block engine cleanup forever
-            handler.postDelayed({
-                response.error("BACKGROUND_LOCATOR_TIMEOUT", "Background callback timed out", null)
-            }, 10000)
         }
 
         private fun scheduleBackgroundEngineDestroy(engine: FlutterEngine) {
