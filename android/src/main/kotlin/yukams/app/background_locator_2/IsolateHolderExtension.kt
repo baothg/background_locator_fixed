@@ -106,12 +106,14 @@ internal fun IsolateHolderService.startLocatorService(context: Context) {
 }
 
 fun getLocationRequest(intent: Intent): LocationRequestOptions {
-    val interval: Long = (intent.getIntExtra(Keys.SETTINGS_INTERVAL, 10) * 1000).toLong()
+    val interval = intent.getIntExtra(Keys.SETTINGS_INTERVAL, 10).toLong() * 1000L
+    require(interval > 0) { "Location interval must be positive" }
     val accuracyKey = intent.getIntExtra(Keys.SETTINGS_ACCURACY, 4)
     val accuracy = getAccuracy(accuracyKey)
-    val distanceFilter = intent.getDoubleExtra(Keys.SETTINGS_DISTANCE_FILTER, 0.0)
+    val distanceFilter = intent.getDoubleExtra(Keys.SETTINGS_DISTANCE_FILTER, 0.0).toFloat()
+    require(distanceFilter.isFinite() && distanceFilter >= 0) { "Invalid distance filter" }
 
-    return LocationRequestOptions(interval, accuracy, distanceFilter.toFloat())
+    return LocationRequestOptions(interval, accuracy, distanceFilter)
 }
 
 fun getAccuracy(key: Int): Int {

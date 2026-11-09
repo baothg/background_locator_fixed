@@ -23,13 +23,15 @@ Refer to [wiki](https://github.com/Yukams/background_locator_fixed/wiki) page fo
 
 **All callbacks run in a background isolate**, not the main isolate: the location callback, `initCallback`, `disposeCallback`, `notificationTapCallback` and the error reporter. They cannot touch the UI directly — use `IsolateNameServer` + `SendPort` to forward data to your main isolate.
 
-**Do not call plugin APIs from inside a callback.** `initialize()`, `registerLocationUpdate()` etc. only work on the main isolate — calling them from within `initCallback`/location/dispose/error callbacks throws `MissingPluginException` because the headless engine has no plugin channel. Call `initialize()` once on the main isolate; inside callbacks only re-setup state (or use the `wasKilled` flag) — the dispatcher already re-initialized itself on resume.
+**Control tracking from the main app isolate.** Call `initialize()` during app startup and await it before registering location updates. Do not recursively initialize or register tracking inside location/init/dispose/error callbacks; the service restores its own dispatcher. `MissingPluginException` means the calling engine/isolate has no registered native handler; it is not proof that a callback ran in the wrong isolate. Plugin availability in a headless engine depends on engine/plugin registration.
 
 **Keep callbacks fast (<10s).** A callback that does not return within 10 seconds trips `BACKGROUND_LOCATOR_TIMEOUT` and is reported to the error reporter. Persist data quickly and return; offload heavy work (network calls, big writes) to a queue processed elsewhere. Repeated errors with the same `code` are deduplicated to one report per 60 seconds.
 
 **`registerLocationUpdate` / `unRegisterLocationUpdate` may throw** `PlatformException` on failure (e.g. `SERVICE_START_FAILED`, `LOCATION_PERMISSION_DENIED`). Wrap them in try/catch instead of assuming success.
 
-**`autoStop` semantics:** when `autoStop: true`, tracking stops only when the app is *terminated* (swiped away), not when it is merely backgrounded. For tracking that survives the app being killed, leave `autoStop: false`.
+**`autoStop` semantics:** when `autoStop: true`, the plugin requests unregister on Flutter's `detached` lifecycle event, not on `paused`. This event is not a reliable swipe-away/process-kill notification and may also occur when the Flutter view is detached. For tracking independent of the UI lifecycle, leave `autoStop: false`. Android force-stop prevents automatic restart until the user launches the app again.
+
+**Android settings validation:** `interval` (seconds) and `wakeLockTime` (minutes) must be positive signed 32-bit integers. `distanceFilter` must be finite, non-negative and fit an Android float. Invalid values now throw `ArgumentError` before the registration channel call; catch these alongside `PlatformException`.
 
 **Android manifest:** the plugin merges location/foreground-service permissions automatically, but the service and boot receiver must still be declared in your app manifest. To get tracking back after reboot and app updates, declare all three actions:
 

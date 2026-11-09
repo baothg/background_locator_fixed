@@ -18,8 +18,7 @@ class InitPluggable : Pluggable {
             (PreferencesManager.getCallbackHandle(context, Keys.INIT_CALLBACK_HANDLE_KEY))?.let { initCallback ->
                 val wasKilled = PreferencesManager.consumeWasKilled(context)
                 val initialDataMap =
-                    (PreferencesManager.getDataCallback(context, Keys.INIT_DATA_CALLBACK_KEY)
-                        ?: emptyMap<Any, Any>()) +
+                    PreferencesManager.getDataCallback(context, Keys.INIT_DATA_CALLBACK_KEY) +
                         if (wasKilled) mapOf(Keys.ARG_WAS_KILLED to true) else emptyMap()
                 IsolateHolderService.invokeBackgroundMethod(
                     context,

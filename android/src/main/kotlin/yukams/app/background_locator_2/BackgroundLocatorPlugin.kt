@@ -20,10 +20,9 @@ class BackgroundLocatorPlugin
     : MethodCallHandler, FlutterPlugin, PluginRegistry.NewIntentListener, ActivityAware {
     var context: Context? = null
     private var activity: Activity? = null
+    private var channel: MethodChannel? = null
 
     companion object {
-        @JvmStatic
-        private var channel: MethodChannel? = null
 
         @JvmStatic
         private fun sendResultWithDelay(

@@ -10,7 +10,6 @@ import android.os.Looper
 import android.os.PowerManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
-import io.flutter.FlutterInjector
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.plugin.common.MethodCall
@@ -272,7 +271,12 @@ class IsolateHolderService : MethodChannel.MethodCallHandler, LocationUpdateList
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val commandIntent = intent ?: restoreStartIntent()
+        val commandIntent = try {
+            intent ?: restoreStartIntent()
+        } catch (e: Exception) {
+            ErrorReporter.report(this, "service_restore", "RESTORE_FAILED", e)
+            null
+        }
         Log.d("IsolateHolderService", "onStartCommand => intent.action : ${commandIntent?.action}")
         if (commandIntent == null) {
             isServiceRunning = false
@@ -318,8 +322,7 @@ class IsolateHolderService : MethodChannel.MethodCallHandler, LocationUpdateList
             isServiceRunning = false
             PreferencesManager.setTrackingEnabled(this, false)
             PreferencesManager.setSessionActive(this, false)
-            locatorClient?.removeLocationUpdates()
-            releaseWakeLock()
+            stopLocationResources()
             stopForeground(true)
             stopSelf(startId)
             return START_NOT_STICKY
@@ -407,15 +410,28 @@ class IsolateHolderService : MethodChannel.MethodCallHandler, LocationUpdateList
         wakeLock = null
     }
 
+    private fun stopLocationResources() {
+        val client = locatorClient
+        locatorClient = null
+        try {
+            client?.removeLocationUpdates()
+        } catch (e: Exception) {
+            ErrorReporter.report(this, "service_cleanup", "REMOVE_UPDATES_FAILED", e)
+        }
+        try {
+            releaseWakeLock()
+        } catch (e: Exception) {
+            ErrorReporter.report(this, "service_cleanup", "RELEASE_WAKELOCK_FAILED", e)
+        }
+    }
+
     private fun shutdownHolderService() {
         Log.d("IsolateHolderService", "shutdownHolderService")
         isServiceRunning = false
         PreferencesManager.setTrackingEnabled(this, false)
         PreferencesManager.setSessionActive(this, false)
         PreferencesManager.setWasKilled(this, false)
-        releaseWakeLock()
-        locatorClient?.removeLocationUpdates()
-        locatorClient = null
+        stopLocationResources()
         stopForeground(true)
         stopSelf()
 
@@ -476,13 +492,7 @@ class IsolateHolderService : MethodChannel.MethodCallHandler, LocationUpdateList
 
     override fun onDestroy() {
         isServiceRunning = false
-        try {
-            releaseWakeLock()
-            locatorClient?.removeLocationUpdates()
-        } catch (e: Exception) {
-            ErrorReporter.report(this, "service_destroy", "DESTROY_FAILED", e)
-        }
-        locatorClient = null
+        stopLocationResources()
         backgroundEngine?.let { scheduleBackgroundEngineDestroy(it) }
         super.onDestroy()
     }
@@ -497,12 +507,6 @@ class IsolateHolderService : MethodChannel.MethodCallHandler, LocationUpdateList
 
     override fun onLocationUpdated(location: HashMap<Any, Any>?) {
         try {
-            context?.let {
-                FlutterInjector.instance().flutterLoader().ensureInitializationComplete(
-                    it, null
-                )
-            }
-
             //https://github.com/flutter/plugins/pull/1641
             //https://github.com/flutter/flutter/issues/36059
             //https://github.com/flutter/plugins/pull/1641/commits/4358fbba3327f1fa75bc40df503ca5341fdbb77d
@@ -537,7 +541,11 @@ class IsolateHolderService : MethodChannel.MethodCallHandler, LocationUpdateList
             } else {
                 locationErrorRetries++
                 Log.w("IsolateHolderService", "Location updates failed, retrying", error)
-                locationRequest?.let { locatorClient?.requestLocationUpdates(it) }
+                try {
+                    locationRequest?.let { locatorClient?.requestLocationUpdates(it) }
+                } catch (e: Exception) {
+                    onLocationError(e)
+                }
             }
         }
     }
@@ -549,7 +557,6 @@ class IsolateHolderService : MethodChannel.MethodCallHandler, LocationUpdateList
         // new version of flutter can not invoke method from background thread
 
         val currentContext = context ?: return
-        Log.d("plugin", "sendLocationEvent $result")
         invokeBackgroundMethod(currentContext, Keys.BCM_SEND_LOCATION, result)
     }
 }

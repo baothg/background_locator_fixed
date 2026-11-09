@@ -63,6 +63,29 @@ class AndroidSettings extends LocatorSettings {
   }) : super(accuracy: accuracy, distanceFilter: distanceFilter);
 
   Map<String, dynamic> toMap() {
+    if (interval <= 0 || interval > 0x7fffffff) {
+      throw ArgumentError.value(
+        interval,
+        'interval',
+        'Must be 1..2147483647 seconds.',
+      );
+    }
+    if (!distanceFilter.isFinite ||
+        distanceFilter < 0 ||
+        distanceFilter > 3.4028234663852886e38) {
+      throw ArgumentError.value(
+        distanceFilter,
+        'distanceFilter',
+        'Must be a finite non-negative float.',
+      );
+    }
+    if (wakeLockTime <= 0 || wakeLockTime > 0x7fffffff) {
+      throw ArgumentError.value(
+        wakeLockTime,
+        'wakeLockTime',
+        'Must be 1..2147483647 minutes.',
+      );
+    }
     return {
       Keys.SETTINGS_ACCURACY: accuracy.value,
       Keys.SETTINGS_INTERVAL: interval,

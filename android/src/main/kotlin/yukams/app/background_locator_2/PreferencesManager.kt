@@ -225,7 +225,12 @@ class PreferencesManager {
             val initialDataStr = context.getSharedPreferences(Keys.SHARED_PREFERENCES_KEY, Context.MODE_PRIVATE)
                     .getString(key, null)
             val type = object : TypeToken<Map<*, *>>() {}.type
-            return Gson().fromJson(initialDataStr, type)
+            return try {
+                Gson().fromJson<Map<*, *>>(initialDataStr, type) ?: emptyMap<Any, Any>()
+            } catch (e: com.google.gson.JsonParseException) {
+                ErrorReporter.report(context, "preferences", "INVALID_INIT_DATA", e)
+                emptyMap<Any, Any>()
+            }
         }
 
         private const val MAX_QUEUED_ERRORS = 20

@@ -7,7 +7,20 @@ class AutoStopHandler extends WidgetsBindingObserver {
   Future<void> didChangeAppLifecycleState(AppLifecycleState state) async {
     switch (state) {
       case AppLifecycleState.detached:
-        await BackgroundLocator.unRegisterLocationUpdate();
+        try {
+          await BackgroundLocator.unRegisterLocationUpdate();
+        } catch (error, stack) {
+          FlutterError.reportError(
+            FlutterErrorDetails(
+              exception: error,
+              stack: stack,
+              library: 'background_locator_2',
+              context: ErrorDescription(
+                'while automatically stopping location updates',
+              ),
+            ),
+          );
+        }
         break;
       case AppLifecycleState.paused:
       case AppLifecycleState.hidden:
