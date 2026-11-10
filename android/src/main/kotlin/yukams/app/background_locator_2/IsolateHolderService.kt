@@ -499,6 +499,11 @@ class IsolateHolderService : MethodChannel.MethodCallHandler, LocationUpdateList
             context?.let { it1 -> it.onServiceDispose(it1) }
         }
         pluggables.clear()
+
+        // Graceful shutdown completed: acknowledge waiting stop commands.
+        // Receivers still pending in onDestroy mean the service died abnormally
+        pendingShutdownResults.forEach { it.send(0, null) }
+        pendingShutdownResults = emptyList()
     }
 
     private fun updateNotification(intent: Intent) {
@@ -554,8 +559,10 @@ class IsolateHolderService : MethodChannel.MethodCallHandler, LocationUpdateList
         isServiceRunning = false
         isServiceCreated = false
         stopLocationResources()
-        isDispatcherReady = false
-        isServiceInitialized = false
+        // Do not reset isDispatcherReady/isServiceInitialized here: when a
+        // callback is still in flight the background engine is kept alive and
+        // its Dart dispatcher stays registered, so it must remain "ready".
+        // scheduleBackgroundEngineDestroy resets them when it actually destroys
         backgroundEngine?.let { scheduleBackgroundEngineDestroy(it) }
         super.onDestroy()
         val results = pendingShutdownResults
