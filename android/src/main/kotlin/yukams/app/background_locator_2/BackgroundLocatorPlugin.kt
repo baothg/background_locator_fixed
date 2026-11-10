@@ -4,6 +4,8 @@ import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.os.Handler
+import android.os.Bundle
+import android.os.ResultReceiver
 import android.util.Log
 import androidx.core.content.ContextCompat
 import io.flutter.embedding.engine.plugins.FlutterPlugin
@@ -23,21 +25,49 @@ class BackgroundLocatorPlugin
     private var channel: MethodChannel? = null
 
     companion object {
+        private var pendingStops = 0
 
-        @JvmStatic
-        private fun sendResultWithDelay(
-            context: Context,
-            result: Result?,
-            value: () -> Any?,
-            delay: Long
-        ) {
-            Handler(context.mainLooper).postDelayed({
-                try {
-                    result?.success(value())
-                } catch (e: Exception) {
-                    ErrorReporter.report(context, "method_call", "DELAYED_RESULT_FAILED", e)
+        private fun commandReceiver(context: Context, result: Result, onCompleted: () -> Unit): ResultReceiver {
+            val handler = Handler(context.mainLooper)
+            val state = BackgroundCallState()
+            val timeout = Runnable {
+                if (state.complete()) {
+                    onCompleted()
+                    result.error("SERVICE_COMMAND_TIMEOUT", "Service did not acknowledge the command", null)
                 }
-            }, delay)
+            }
+            handler.postDelayed(timeout, 30000)
+            return object : ResultReceiver(handler) {
+                override fun onReceiveResult(resultCode: Int, resultData: Bundle?) {
+                    if (!state.complete()) return
+                    handler.removeCallbacks(timeout)
+                    onCompleted()
+                    if (resultCode == 0) {
+                        result.success(true)
+                    } else {
+                        result.error("SERVICE_COMMAND_FAILED", resultData?.getString("message"), null)
+                    }
+                }
+            }
+        }
+
+        private fun sendCommand(context: Context, intent: Intent, result: Result) {
+            val stopping = intent.action == IsolateHolderService.ACTION_SHUTDOWN
+            if (stopping) pendingStops++
+            val receiver = commandReceiver(context, result) {
+                if (stopping) pendingStops--
+            }
+            intent.putExtra(IsolateHolderService.COMMAND_RESULT, receiver)
+            try {
+                if (intent.action == IsolateHolderService.ACTION_SHUTDOWN) {
+                    stopIsolateService(context, intent)
+                } else {
+                    ContextCompat.startForegroundService(context, intent)
+                }
+            } catch (e: Exception) {
+                ErrorReporter.report(context, "service_command", "SERVICE_COMMAND_FAILED", e)
+                receiver.send(1, Bundle().apply { putString("message", e.message) })
+            }
         }
 
         @JvmStatic
@@ -95,45 +125,19 @@ class BackgroundLocatorPlugin
 
             PreferencesManager.saveSettings(context, args)
 
-            if (IsolateHolderService.isServiceRunning) {
-                // Service is already running: apply the new callbacks and settings
-                // (location interval/notification need a restart to take effect)
-                Log.d("BackgroundLocatorPlugin", "Locator service is already running, updated callbacks")
-                result?.success(true)
-                return
-            }
-
+            // Service is already running: apply the new callbacks and settings
+            // through ACTION_START, and acknowledge only after they are applied
             PreferencesManager.setTrackingEnabled(context, true)
-            try {
+            val intent = createStartIntent(context, settings)
+            // The START intent may be dispatched before the service is created;
+            // its result comes from the service rather than a one-second guess.
+            // A command timeout reports failure without disabling tracking or
+            // shutting down a newer registration that may already be running.
+            if (result != null) {
+                sendCommand(context, intent, result)
+            } else {
                 startIsolateService(context, settings)
-            } catch (e: Exception) {
-                PreferencesManager.setTrackingEnabled(context, false)
-                ErrorReporter.report(context, "register", "SERVICE_START_FAILED", e)
-                result?.error("SERVICE_START_FAILED", e.message, null)
-                return
             }
-
-            Handler(context.mainLooper).postDelayed({
-                try {
-                    if (IsolateHolderService.isServiceRunning) {
-                        result?.success(true)
-                    } else {
-                        PreferencesManager.setTrackingEnabled(context, false)
-                        // The START intent was already dispatched: if the service
-                        // materializes after this check, it must not keep running
-                        // as a zombie with trackingEnabled=false (which would also
-                        // break the restart-after-kill path)
-                        stopIsolateService(context)
-                        result?.error(
-                            "SERVICE_START_FAILED",
-                            "Locator service failed to start",
-                            null
-                        )
-                    }
-                } catch (e: Exception) {
-                    ErrorReporter.report(context, "register", "RESULT_FAILED", e)
-                }
-            }, 1000)
         }
 
         @JvmStatic
@@ -198,9 +202,7 @@ class BackgroundLocatorPlugin
         }
 
         @JvmStatic
-        private fun stopIsolateService(context: Context) {
-            val intent = Intent(context, IsolateHolderService::class.java)
-            intent.action = IsolateHolderService.ACTION_SHUTDOWN
+        private fun stopIsolateService(context: Context, intent: Intent) {
             Log.d("BackgroundLocatorPlugin", "stopIsolateService => Shutting down locator plugin")
             try {
                 ContextCompat.startForegroundService(context, intent)
@@ -224,19 +226,21 @@ class BackgroundLocatorPlugin
         private fun unRegisterPlugin(context: Context, result: Result?) {
             val wasTracking = PreferencesManager.isTrackingEnabled(context)
             PreferencesManager.setTrackingEnabled(context, false)
-            if (!IsolateHolderService.isServiceRunning && !wasTracking) {
+            if (!IsolateHolderService.isServiceCreated && !IsolateHolderService.isServiceRunning && !wasTracking && pendingStops == 0) {
                 // The service is not running and no start is pending
                 Log.d("BackgroundLocatorPlugin", "Locator service is not running, nothing to stop")
                 result?.success(true)
                 return
             }
 
-            stopIsolateService(context)
+            val intent = Intent(context, IsolateHolderService::class.java).apply {
+                action = IsolateHolderService.ACTION_SHUTDOWN
+            }
 
-            // We need to know when the service detached exactly, there is some delay between stopping a
-            // service and it's detachment
-            // HELP WANTED: I couldn't find a better way to handle this, so any help or suggestion would be appreciated
-            sendResultWithDelay(context, result, { true }, 1000)
+            // Wait for actual native shutdown instead of guessing when the service detaches.
+            // Dart dispose callbacks may continue on the retained background engine.
+            // The command deadline reports failure; it never fabricates a successful stop.
+            if (result != null) sendCommand(context, intent, result) else stopIsolateService(context, intent)
         }
 
         @JvmStatic

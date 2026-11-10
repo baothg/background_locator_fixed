@@ -4,7 +4,9 @@
 * **Fix:** Android notification tap callback (`notificationTapCallback`) now actually fires — it runs in the background isolate, not the main isolate.
 * **Fix:** location tracking now resumes after the process is killed or the device reboots; added `QUICKBOOT_POWERON` and `MY_PACKAGE_REPLACED` triggers (update your app manifest intent-filter, see README).
 * **Fix:** register/unregister race no longer leaks a running service; re-registering while running now applies new callbacks/settings.
-* **Fix:** background engine is no longer destroyed while callbacks are in flight; stuck callbacks can no longer block engine cleanup.
+* **Fix:** callback timeouts report warnings without decrementing in-flight calls; the engine waits for actual Dart replies, including calls queued during dispatcher warmup. Unregister acknowledges actual service destruction, not Dart callback completion. A callback that never replies can retain the engine indefinitely.
+* **Fix:** Android unregister acknowledges from service destruction instead of a one-second timer; register acknowledges after applying settings, including interval/provider/notification changes while running. Missing acknowledgement raises `SERVICE_COMMAND_TIMEOUT` after 30 seconds.
+* **Fix:** transient service restore failures preserve tracking intent and retry with exponential backoff (1–60 seconds), canceled by unregister/destruction.
 * **Fix:** wake lock no longer leaks on shutdown and is refreshed on every location update (keeps CPU awake while updates flow).
 * **Fix:** transient location provider errors retry (up to 3x) instead of killing the service.
 * **Feat:** `BackgroundLocator.setErrorReporter` — registers a top-level/static function (background isolate) that receives every caught plugin error `{source, code, message, stack, timestamp}`; errors are queued and delivered even when they happen while the app is killed.
